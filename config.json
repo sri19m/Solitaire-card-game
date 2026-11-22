@@ -1,0 +1,9 @@
+{
+  "glyph_dir": "glyphs",
+  "copies_per_rank": 4,
+  "wrap_around": true,
+  "tap_delay": 0.30,
+  "max_losses_in_a_row": 3,
+  "retry_on_loss": true,
+  "max_unknown_screens": 12
+}
