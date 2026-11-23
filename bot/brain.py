@@ -62,6 +62,18 @@ def next_prob(p: dict[int, float], rank: int, wrap: bool = True) -> float:
     return sum(pr for r, pr in p.items() if adjacent(r, rank, wrap))
 
 
+def first_failed_tap(chain, board, tol: int = 12):
+    """The first tapped card that is still on the board afterwards (same place, same rank), or None.
+
+    A successful tap removes the card, so a card that is still there means the game rejected
+    the tap: the rank was misread, or the card is covered by another card.
+    """
+    for c in chain:
+        if any(abs(b.x - c.x) < tol and abs(b.y - c.y) < tol and b.rank == c.rank for b in board):
+            return c
+    return None
+
+
 def plan(active: int, free: list[Free], p: dict[int, float], w: dict | None = None,
          wrap: bool = True, node_cap: int = 40000) -> list[Free]:
     """Pick the best sequence of taps from the current board. [] means: draw a card.

@@ -4,19 +4,27 @@ ROIs are (x, y, w, h).
 """
 CANON_W = 1536
 
-BOARD_ROI = (340, 110, 870, 420)        # all board cards live here
-ACTIVE_ROI = (800, 540, 120, 165)       # the face-up card at the bottom
-ACTIVE_TAP = (858, 622)
+BOARD_ROI = (180, 95, 1210, 445)        # all board cards live here
+ACTIVE_ROI = (790, 535, 140, 175)       # the face-up card at the bottom
 
-DRAW_TAP = (727, 622)                   # top of the face-down draw pile
-STOCK_COIN_ROI = (668, 662, 38, 34)     # gold coin of the "+5 cards" shop tile (only when pile is empty)
-END_LEVEL_TAP = (370, 648)              # red END LEVEL button (only shown when stuck)
+DRAW_TAP = (727, 622)                   # top card of the face-down draw pile
+PILE_TOP_ROI = (692, 562, 70, 120)      # that card, compared against its look at level start
+END_LEVEL_ROI = (285, 622, 190, 52)     # red END LEVEL button, shown once the pile is empty
+END_LEVEL_TAP = (377, 648)
 
 GEAR_ROI = (75, 20, 56, 56)             # blue settings gear, top-left, in-game only
 WILD_ROI = (1415, 515, 80, 100)         # golden WILD card, in-game only
 
-# Never tap these: they cost coins.
-UNDO_ZONE = (930, 540, 140, 130)        # green undo button (250-400 coins)
-SHOP_ZONE = (630, 540, 150, 160)        # "+5" card purchase (2900 coins) appears where the pile was
+# Green buttons the bot may tap: name -> (x, y, tolerance, requires the red X of a level popup)
+SAFE_BUTTONS = {
+    "level popup Play / Try again": (767, 500, 60, True),
+    "lobby Level": (1435, 615, 90, False),
+}
+POPUP_CLOSE_ROI = (1060, 103, 46, 46)   # red X of the level popup
+
+# Never tapped, they cost coins: undo (930-1070, 540-670), the "+5 cards" tile that replaces the
+# empty pile (630-780, 540-700) and the WILD card. The bot only taps board cards, the pile while
+# it is verified present, END LEVEL, and SAFE_BUTTONS.
 
 CARD_W, CARD_H = 89, 138
+CARD_SHORT = (55, 115)                  # accepted card width range in px (layouts can scale cards)

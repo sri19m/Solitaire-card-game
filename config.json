@@ -1,9 +1,11 @@
 {
   "glyph_dir": "glyphs",
+  "max_glyph_dist": 0.16,
+  "max_glyph_ratio": 0.8,
   "copies_per_rank": 4,
   "wrap_around": true,
   "tap_delay": 0.30,
+  "auto_start_levels": true,
   "max_losses_in_a_row": 3,
-  "retry_on_loss": true,
   "max_unknown_screens": 12
 }

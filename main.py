@@ -1,8 +1,9 @@
 """Play loop.
 
-    python main.py --learn        # first run: asks you to label cards it can't read yet
+    python main.py --learn        # play, and ask you whenever a card can't be read with confidence
     python main.py                # autonomous play
-    python main.py --dry-run      # read the screen and print decisions, never tap
+    python main.py --dry-run      # read the screen once and print the decision, never tap
+    python main.py --debug        # also save annotated screenshots to debug/
     python main.py --levels 25    # stop after 25 wins
 
 Stop with Ctrl+C. Results are appended to runs.csv.
@@ -17,24 +18,61 @@ import cv2
 
 from bot import geometry as G
 from bot.adb import Phone
-from bot.brain import Free, LevelMemory, plan
+from bot.brain import Free, LevelMemory, first_failed_tap, plan
+from bot.debug import annotate
 from bot.learn import ask_rank
-from bot.vision import GlyphBook, detect_scene, read_game
+from bot.vision import NAMES, GlyphBook, detect_scene, image_diff, pile_matches, read_game
 
 
-def log_run(result: str, moves: int, draws: int):
+def save(folder: str, img, name: str) -> str:
+    Path(folder).mkdir(exist_ok=True)
+    path = f"{folder}/{time.strftime('%Y%m%d_%H%M%S')}_{name}.png"
+    cv2.imwrite(path, img)
+    return path
+
+
+def log_run(result: str, lvl) -> None:
     new = not Path("runs.csv").exists()
     with open("runs.csv", "a", newline="") as f:
         w = csv.writer(f)
         if new:
-            w.writerow(["time", "result", "taps", "draws"])
-        w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), result, moves, draws])
+            w.writerow(["time", "result", "taps", "draws", "failed_taps"])
+        w.writerow([time.strftime("%Y-%m-%d %H:%M:%S"), result, lvl.taps, lvl.draws, lvl.failed_taps])
+
+
+class Level:
+    """What the bot remembers during one level."""
+
+    def __init__(self, copies: int, pile_ref):
+        self.mem = LevelMemory(copies)
+        self.pile_ref = pile_ref      # look of the draw pile at level start (None = pile not seen)
+        self.taps = self.draws = self.failed_taps = 0
+        self.ended_by_me = False
+        self.last_view = None
+        self.last_chain_len = 0
+        self.chain = []               # taps made last step, verified on the next screenshot
+        self.drew = False
+        self.prev_active = None
+        self.draw_fails = 0           # draws in a row that didn't change the bottom card
+        self.pile_unsure = 0
+        self.suspects = []            # (x, y, rank) of cards whose tap did nothing
+        self.suspect_n = None         # board size when the suspects were recorded
+        self.seen_keys = set()        # unreadable cards already saved / asked about
+        self.gambled = set()
+
+    def is_suspect(self, c) -> bool:
+        return any(abs(c.x - x) < 15 and abs(c.y - y) < 15 and c.rank == r for x, y, r in self.suspects)
+
+
+def key(c):
+    return (c.x // 20, c.y // 20)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--learn", action="store_true")
+    ap.add_argument("--debug", action="store_true")
     ap.add_argument("--serial")
     ap.add_argument("--levels", type=int, default=0, help="stop after this many wins (0 = never)")
     ap.add_argument("--max-steps", type=int, default=100000)
@@ -42,56 +80,57 @@ def main():
 
     cfg = json.load(open("config.json"))
     phone = Phone(args.serial)
+    book = GlyphBook(cfg["glyph_dir"], cfg["max_glyph_dist"], cfg["max_glyph_ratio"])
+    if book.missing_ranks():
+        print("No labelled samples yet for:", ", ".join(NAMES[r] for r in book.missing_ranks()))
+        if not args.learn:
+            print("Run 'python main.py --learn' until every rank is labelled, or those cards will be skipped.")
     if not args.dry_run:
-        phone.keep_awake()
-    book = GlyphBook(cfg["glyph_dir"])
+        try:
+            phone.keep_awake()
+        except Exception:
+            pass
     tap = (lambda x, y: None) if args.dry_run else phone.tap
 
-    mem = None                 # LevelMemory while a level is in progress
-    last = None                # last GameView of the level
-    last_plan_len = 0
-    taps = draws = 0
-    just_drew = False
-    ended_by_me = False
-    wins = losses_row = unknown = 0
-    still_draws = 0            # draws that didn't change the active card
-    prev_active = None
+    lvl = None
+    wins = losses_row = unknown = bad_active = 0
 
     for step in range(args.max_steps):
         img = phone.stable_grab()
         scene, btn = detect_scene(img)
 
-        # ---------------- not in a level ----------------
+        # ---------------- outside a level ----------------
         if scene != "GAME":
-            if mem is not None:
-                cleared = last is not None and last.blue_area < 1500 and len(last.board) <= last_plan_len
-                result = "win" if cleared and not ended_by_me else "loss"
-                log_run(result, taps, draws)
-                print(f"== level over: {result} (taps={taps}, draws={draws})")
+            if lvl is not None:
+                v = lvl.last_view
+                cleared = v is not None and v.blue_area < 1500 and len(v.board) <= lvl.last_chain_len
+                result = "loss" if lvl.ended_by_me else ("win" if cleared else "unknown")
+                log_run(result, lvl)
+                print(f"== level over: {result} (taps={lvl.taps}, draws={lvl.draws}, failed taps={lvl.failed_taps})")
                 if result == "win":
                     wins, losses_row = wins + 1, 0
                 else:
                     losses_row += 1
-                mem, last, taps, draws, ended_by_me, still_draws = None, None, 0, 0, False, 0
+                lvl = None
                 if args.levels and wins >= args.levels:
                     print(f"Reached {wins} wins. Stopping.")
                     break
             if scene == "BUTTON":
                 unknown = 0
-                if losses_row >= cfg["max_losses_in_a_row"] or (losses_row and not cfg["retry_on_loss"]):
-                    print(f"Lost {losses_row} in a row (each retry costs coins). Stopping.")
+                if losses_row >= cfg["max_losses_in_a_row"]:
+                    print(f"{losses_row} levels in a row not won (each try costs coins). Stopping.")
                     break
-                print(f"green button at {btn}, tapping")
-                tap(*btn)
-                time.sleep(2.0)
+                if not cfg["auto_start_levels"]:
+                    print("At a level popup and auto_start_levels is off. Stopping.")
+                    break
+                print(f"tapping the {btn[2]} button")
+                tap(btn[0], btn[1])
+                time.sleep(2.5)
             else:
                 unknown += 1
-                print(f"unknown screen ({unknown})")
+                print(f"unknown screen ({unknown}), not tapping anything")
                 if unknown == 3:
-                    Path("unknown").mkdir(exist_ok=True)
-                    p = f"unknown/{time.strftime('%H%M%S')}.png"
-                    cv2.imwrite(p, img)
-                    print(f"  saved {p}. Send it to me and I'll teach the bot this screen.")
+                    print(f"  saved {save('unknown', img, 'screen')}. Send it to me so the bot can learn this screen.")
                 if unknown >= cfg["max_unknown_screens"]:
                     print("Stuck on an unknown screen. Stopping.")
                     break
@@ -102,69 +141,126 @@ def main():
 
         # ---------------- in a level ----------------
         unknown = 0
-        view = read_game(img, book)
+        strict = args.learn and bool(book.missing_ranks())
+        view = read_game(img, book, strict)
+        a = view.active
+        if a is None:
+            print("bottom card not found (animation?), waiting")
+            time.sleep(0.5)
+            continue
+        if a.rank is None:
+            if args.learn:
+                r = ask_rank(a.crop, "Rank of the BOTTOM card?")
+                if r:
+                    book.add(r, a.crop)
+                continue
+            bad_active += 1
+            if bad_active >= 5:
+                save("pending", a.crop, f"active_{NAMES.get(a.read.guess, 'x')}")
+                print("Can't read the bottom card. Run 'python main.py --learn' to label it. Stopping.")
+                break
+            time.sleep(0.5)
+            continue
+        bad_active = 0
 
-        if view.unreadable and args.learn:
-            for c in view.unreadable + ([view.active] if view.active and view.active.rank is None else []):
-                r = ask_rank(c.crop)
+        if lvl is None:
+            lvl = Level(cfg["copies_per_rank"], None if view.end_level else view.pile)
+            lvl.mem.see_drawn(a.rank)
+            print("== new level")
+        else:
+            # Check that the previous step's actions actually happened.
+            if lvl.drew:
+                if image_diff(lvl.prev_active, a.crop) > 6:
+                    lvl.mem.see_drawn(a.rank)
+                    lvl.draw_fails = 0
+                else:
+                    lvl.draw_fails += 1
+                    print("  the draw didn't change the bottom card")
+            if lvl.chain:
+                bad = first_failed_tap(lvl.chain, view.board)
+                if bad:
+                    lvl.failed_taps += 1
+                    print(f"  tapping {NAMES[bad.rank]} at ({bad.x},{bad.y}) did nothing: misread or covered, skipping it")
+                    lvl.suspects.append((bad.x, bad.y, bad.rank))
+                    lvl.suspect_n = len(view.board)
+                    card = next((c for c in view.board if abs(c.x - bad.x) < 12 and abs(c.y - bad.y) < 12), None)
+                    if card is not None:
+                        if args.learn:
+                            r = ask_rank(card.crop, f"Tapping this card did nothing. Bot read it as {NAMES[bad.rank]}."
+                                                    " Real rank?", allow_keep=True)
+                            if r and r != "keep" and r != bad.rank:
+                                book.add(r, card.crop)
+                                print("  thanks, learned")
+                                lvl.chain, lvl.drew = [], False
+                                continue
+                        else:
+                            save("pending", card.crop, f"failed_{NAMES[bad.rank]}")
+        lvl.chain, lvl.drew, lvl.prev_active = [], False, a.crop
+
+        # Cards the bot isn't sure about: ask (learn mode) or keep for later labelling.
+        fresh = [c for c in view.unreadable if key(c) not in lvl.seen_keys]
+        for c in fresh:
+            lvl.seen_keys.add(key(c))
+            guess = NAMES.get(c.read.guess, "?")
+            if args.learn:
+                r = ask_rank(c.crop, f"Rank of this board card? (bot's guess: {guess})")
                 if r:
                     book.add(r, c.crop)
-            continue
-        if view.active is not None and view.active.rank is None and args.learn:
-            r = ask_rank(view.active.crop)
-            if r:
-                book.add(r, view.active.crop)
-            continue
-        if view.active is None or view.active.rank is None:
-            print("can't read the active card, waiting")
-            time.sleep(1)
+            else:
+                save("pending", c.crop, f"guess_{guess}")
+        if fresh and args.learn:
             continue
 
-        if mem is None:
-            mem = LevelMemory(cfg["copies_per_rank"])
-            mem.see_drawn(view.active.rank)
-            print("== new level")
-        elif just_drew:
-            same = prev_active is not None and prev_active.shape == view.active.crop.shape and \
-                float(cv2.absdiff(prev_active, view.active.crop).mean()) < 3.0
-            still_draws = still_draws + 1 if same else 0
-            if not same:
-                mem.see_drawn(view.active.rank)
-        just_drew = False
-        prev_active = view.active.crop
-        if still_draws >= 2:      # drawing no longer changes the card: the pile is empty
-            view.stock_empty = True
         for c in view.board:
-            mem.see_board(c.x, c.y, c.rank)
-        last = view
+            lvl.mem.see_board(c.x, c.y, c.rank)
+        if lvl.suspects and len(view.board) != lvl.suspect_n:
+            lvl.suspects.clear()          # the board changed, a covered card may be free now
 
-        free = [Free((c.x, c.y), c.rank, c.unlock, c.x, c.y) for c in view.board]
-        chain = plan(view.active.rank, free, mem.probs(), None, cfg["wrap_around"])
-        names = lambda cs: [c.rank for c in cs]
-        print(f"[{step}] active={view.active.rank} free={names(view.board)} "
-              f"unreadable={len(view.unreadable)} plan={names(chain)}")
+        playable = [c for c in view.board if not lvl.is_suspect(c)]
+        free = [Free((c.x, c.y), c.rank, c.unlock, c.x, c.y) for c in playable]
+        chain = plan(a.rank, free, lvl.mem.probs(), None, cfg["wrap_around"])
+        lvl.last_view = view
+
+        names = lambda cs: " ".join(NAMES[c.rank] for c in cs) or "-"
+        note = (f"[{step}] bottom={NAMES[a.rank]} board=[{names(view.board)}] unsure={len(view.unreadable)} "
+                f"skipped={len(view.board) - len(playable)} plan=[{names(chain)}]")
+        print(note)
+        if args.debug:
+            save("debug", annotate(img, view, chain, lvl.is_suspect, note), f"step{step}")
 
         if chain:
-            still_draws = 0
-            last_plan_len = len(chain)
             for c in chain:
                 tap(c.x, c.y)
-                taps += 1
                 time.sleep(cfg["tap_delay"])
-        elif view.stock_empty and view.unreadable:
-            print("  pile empty but some cards are unreadable; not ending the level")
-            time.sleep(1)
-        elif view.stock_empty:
-            print("  no moves and the draw pile is empty -> END LEVEL")
-            ended_by_me = True
-            tap(*G.END_LEVEL_TAP)
-            time.sleep(2.0)
+            lvl.chain, lvl.taps, lvl.last_chain_len, lvl.pile_unsure = chain, lvl.taps + len(chain), len(chain), 0
         else:
-            last_plan_len = 0
-            print("  no moves -> drawing")
-            tap(*G.DRAW_TAP)
-            draws += 1
-            just_drew = True
+            lvl.last_chain_len = 0
+            pile_ok = (not view.end_level and lvl.draw_fails < 2
+                       and lvl.pile_ref is not None and pile_matches(lvl.pile_ref, view.pile))
+            if pile_ok:
+                print("  no moves -> drawing")
+                tap(*G.DRAW_TAP)
+                lvl.drew, lvl.draws, lvl.pile_unsure = True, lvl.draws + 1, 0
+            elif view.end_level:
+                # The pile is empty. Taps on cards are free, so try the cards it couldn't read first.
+                gamble = [c for c in view.unreadable + [c for c in view.board if lvl.is_suspect(c)]
+                          if key(c) not in lvl.gambled]
+                if gamble:
+                    lvl.gambled.add(key(gamble[0]))
+                    print("  pile empty, trying an uncertain card (free)")
+                    tap(gamble[0].x, gamble[0].y)
+                else:
+                    print("  no moves and the draw pile is empty -> END LEVEL (never buying +5 cards)")
+                    lvl.ended_by_me = True
+                    tap(*G.END_LEVEL_TAP)
+                    time.sleep(2.0)
+            else:
+                lvl.pile_unsure += 1
+                print("  the draw pile doesn't look like at level start, not tapping it (could be the +5 shop tile)")
+                if lvl.pile_unsure >= 3:
+                    print(f"  saved {save('unknown', img, 'pile')}. Send it to me. Stopping to be safe.")
+                    break
+                time.sleep(1.0)
         if args.dry_run:
             break
 
