@@ -13,6 +13,8 @@ DRAW_TAP = (727, 622)                   # top card of the face-down draw pile
 PILE_TOP_ROI = (692, 562, 70, 120)      # that card, compared against its look at level start
 END_LEVEL_ROI = (285, 622, 190, 52)     # red END LEVEL button, shown once the pile is empty
 END_LEVEL_TAP = (377, 648)
+PLUS5_TAP = (712, 615)                  # "+5 cards" tile that replaces the empty pile
+PLUS5_BADGE_ROI = (744, 538, 30, 30)    # red count badge on that tile = you own a FREE +5 (paid one shows a price)
 
 GEAR_ROI = (75, 20, 56, 56)             # blue settings gear, top-left, in-game only
 WILD_ROI = (1415, 515, 80, 100)         # golden WILD card, in-game only

@@ -61,6 +61,8 @@ class Level:
         self.seen_keys = set()        # unreadable cards already saved / asked about
         self.gambled = set()
         self.wild_drawn = False       # we just drew a WILD from the pile
+        self.plus5_used = 0           # free +5 tiles used this level
+        self.end_taps = 0             # END LEVEL taps that didn't end the level
 
     def is_suspect(self, c) -> bool:
         return any(abs(c.x - x) < 15 and abs(c.y - y) < 15 and c.rank == r for x, y, r in self.suspects)
@@ -288,9 +290,20 @@ def main():
                     lvl.gambled.add(key(gamble[0]))
                     print("  pile empty, trying an uncertain card (free)")
                     tap(gamble[0].x, gamble[0].y)
+                elif view.free_plus5 and lvl.plus5_used < cfg["max_free_plus5_per_level"]:
+                    print("  pile empty, you own a free +5 (red badge) -> using it")
+                    tap(*G.PLUS5_TAP)
+                    lvl.plus5_used += 1
+                    lvl.draw_fails, lvl.pile_ref, lvl.gambled = 0, None, set()  # new cards: re-learn the pile look
+                    time.sleep(1.5)
                 else:
+                    if lvl.end_taps >= 2:
+                        print(f"  END LEVEL didn't end the level. Saved {save('unknown', img, 'end_level')}."
+                              " Send it to me. Stopping.")
+                        break
                     print("  no moves and the draw pile is empty -> END LEVEL (never buying +5 cards)")
                     lvl.ended_by_me = True
+                    lvl.end_taps += 1
                     tap(*G.END_LEVEL_TAP)
                     time.sleep(2.0)
             else:

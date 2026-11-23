@@ -273,6 +273,7 @@ class GameView:
     pile: np.ndarray = field(repr=False)  # crop of the draw pile's top card
     pile_wild: bool = False    # a free WILD card (streak reward) sits on top of the draw pile
     active_gold: bool = False  # the bottom card slot is golden, i.e. a WILD card is the bottom card
+    free_plus5: bool = False   # pile empty and the "+5" tile carries a red badge: a free +5 you own
 
 
 def read_game(img, book: GlyphBook, strict: bool = False) -> GameView:
@@ -299,7 +300,8 @@ def read_game(img, book: GlyphBook, strict: bool = False) -> GameView:
     return GameView(active, board, bad, int((blue[by:by + bh, bx:bx + bw] > 0).sum()), end_level,
                     img[py:py + ph, px:px + pw].copy(),
                     pile_wild=not end_level and fraction(gold_mask, img, G.PILE_TOP_ROI) > 0.45,
-                    active_gold=active is None and fraction(gold_mask, img, G.ACTIVE_INNER) > 0.5)
+                    active_gold=active is None and fraction(gold_mask, img, G.ACTIVE_INNER) > 0.5,
+                    free_plus5=end_level and fraction(red_mask, img, G.PLUS5_BADGE_ROI) > 0.3)
 
 
 def wild_card(img) -> "Card":

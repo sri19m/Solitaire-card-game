@@ -232,3 +232,18 @@ def test_card_touching_white_symbol_of_board_item():
             cv2.rectangle(img, (x - 4, 262), (x + 88, 352), (150, 40, 120), -1)    # purple item
             cv2.ellipse(img, (x + 44, 340), (22, 14), 0, 0, 360, (250, 250, 250), -1)  # its white symbol
         assert sorted(c.rank for c in read_game(img, book).board) == [6, 10]
+
+
+def test_free_plus5_only_with_badge():
+    with tempfile.TemporaryDirectory() as d:
+        img = frame(active=8)
+        x, y, w, h = G.PILE_TOP_ROI
+        img[y:y + h, x - 40:x + w] = BACK
+        cv2.putText(img, "+5", (x - 20, y + 75), cv2.FONT_HERSHEY_DUPLEX, 1.8, (255, 255, 255), 6)
+        cv2.rectangle(img, (280, 615), (480, 680), (40, 40, 230), -1)           # END LEVEL
+        v = read_game(img, GlyphBook(d))
+        assert v.end_level and not v.free_plus5 and not v.pile_wild               # paid +5: never tapped
+        cv2.circle(img, (759, 553), 14, (40, 40, 230), -1)                      # red "1" badge
+        cv2.putText(img, "1", (753, 560), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        assert read_game(img, GlyphBook(d)).free_plus5
+        assert not read_game(frame(active=8), GlyphBook(d)).free_plus5           # pile not empty

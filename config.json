@@ -7,5 +7,6 @@
   "tap_delay": 0.30,
   "auto_start_levels": true,
   "max_losses_in_a_row": 2,
+  "max_free_plus5_per_level": 3,
   "max_unknown_screens": 12
 }
