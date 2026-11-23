@@ -286,3 +286,29 @@ def test_paid_tile_with_bigger_coin_is_still_paid():
     cv2.putText(img, "2,900", (712, 690), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     with tempfile.TemporaryDirectory() as d:
         assert not read_game(img, GlyphBook(d)).free_extra
+
+
+def test_close_button_on_event_popup():
+    from bot.vision import find_close_button
+    popup = np.full((716, 1536, 3), (60, 40, 30), np.uint8)
+    cv2.rectangle(popup, (420, 40), (1130, 640), (60, 170, 230), -1)            # event panel
+    cv2.circle(popup, (1478, 52), 28, (40, 40, 230), -1)                        # red X button
+    cv2.line(popup, (1466, 40), (1490, 64), (255, 255, 255), 6)
+    cv2.line(popup, (1490, 40), (1466, 64), (255, 255, 255), 6)
+    pos = find_close_button(popup)
+    assert pos and abs(pos[0] - 1478) < 6 and abs(pos[1] - 52) < 6
+    lobby = np.full((716, 1536, 3), (60, 40, 30), np.uint8)
+    cv2.rectangle(lobby, (60, 160), (140, 200), (40, 40, 230), -1)              # red timer label
+    cv2.circle(lobby, (1310, 40), 12, (40, 40, 230), -1)                        # small red badge
+    cv2.circle(lobby, (700, 120), 28, (40, 40, 230), -1)                        # red circle without an X
+    assert find_close_button(lobby) is None
+
+
+def test_clear_chance():
+    from bot.brain import clear_chance
+    p = rank_probs({})
+    assert clear_chance(5, [], p, 5) == 1.0
+    one = clear_chance(5, [9], p, 5)                  # one card left, 5 draws
+    many = clear_chance(5, [9, 2, 12, 7, 3, 11], p, 5, hidden=6)
+    assert 0.3 < one < 0.95 and many < one
+    assert clear_chance(5, [6], p, 0) == 1.0          # already playable

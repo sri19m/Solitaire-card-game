@@ -349,7 +349,7 @@ def _extra_cards(img, end_level) -> dict:
     badge = fraction(red_mask, img, G.PLUS5_BADGE_ROI) > 0.3
     price, score = price_under_tile(img)
     if price is True:
-        return {"free_extra": False, "extra_reason": f"coin price shown (match {score:.2f}), never tapping"}
+        return {"free_extra": False, "extra_reason": f"coin price shown, match {score:.2f}"}
     if price is False:
         return {"free_extra": True, "extra_reason": f"no coin price on the tile (match {score:.2f})"}
     if badge:
@@ -361,6 +361,29 @@ def wild_card(img) -> "Card":
     """Pseudo card for a WILD lying in the bottom-card slot."""
     x, y, w, h = G.ACTIVE_INNER
     return Card(0, G.ACTIVE_TAP[0], G.ACTIVE_TAP[1], G.ACTIVE_INNER, img[y:y + h, x:x + w].copy())
+
+
+def find_close_button(img):
+    """Centre (x, y) of a red round close button with a white X near the top of the screen, or None.
+
+    Event popups (e.g. "The Honey Chase") are dismissed with it. Closing never costs coins.
+    """
+    roi = G.CLOSE_SEARCH_ROI
+    rx, ry, rw, rh = roi
+    sub = img[ry:ry + rh, rx:rx + rw]
+    hsv = cv2.cvtColor(sub, cv2.COLOR_BGR2HSV)
+    red = red_mask(hsv)
+    white = cream_mask(hsv)
+    best = None
+    for c in cv2.findContours(red, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+        x, y, w, h = cv2.boundingRect(c)
+        area = cv2.contourArea(c)
+        if not (900 <= area <= 6000 and 0.75 <= w / h <= 1.33 and area >= 0.65 * w * h):
+            continue
+        inner = white[y + h // 4:y + 3 * h // 4, x + w // 4:x + 3 * w // 4]
+        if inner.size and (inner > 0).mean() >= 0.12 and (best is None or area > best[0]):
+            best = (area, rx + x + w // 2, ry + y + h // 2)
+    return None if best is None else (best[1], best[2])
 
 
 def find_coin(img, roi):

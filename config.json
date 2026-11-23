@@ -4,9 +4,13 @@
   "max_glyph_ratio": 0.8,
   "copies_per_rank": 4,
   "wrap_around": true,
-  "tap_delay": 0.30,
+  "tap_delay": 0.15,
   "auto_start_levels": true,
   "max_losses_in_a_row": 2,
   "max_free_plus5_per_level": 3,
+  "buy_extra_cards": "always",
+  "max_paid_extra_per_level": 1,
+  "buy_min_chance": 0.5,
+  "extra_cards_assumed": 5,
   "max_unknown_screens": 12
 }

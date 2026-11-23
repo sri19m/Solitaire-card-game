@@ -18,11 +18,11 @@ import cv2
 
 from bot import geometry as G
 from bot.adb import Phone
-from bot.brain import WILD, Free, LevelMemory, first_failed_tap, plan
+from bot.brain import WILD, Free, LevelMemory, clear_chance, first_failed_tap, plan
 from bot.debug import annotate
 from bot.learn import ask_rank
 from bot.screens import ScreenBook
-from bot.vision import NAMES, GlyphBook, detect_scene, image_diff, pile_matches, read_game, wild_card
+from bot.vision import NAMES, GlyphBook, detect_scene, find_close_button, image_diff, pile_matches, read_game, wild_card
 
 
 def save(folder: str, img, name: str) -> str:
@@ -63,6 +63,8 @@ class Level:
         self.wild_drawn = False       # we just drew a WILD from the pile
         self.plus5_used = 0           # free +5 tiles used this level
         self.end_taps = 0             # END LEVEL taps that didn't end the level
+        self.paid_used = 0            # extra-card tiles bought with coins this level
+        self.bought_at = 0.0
 
     def is_suspect(self, c) -> bool:
         return any(abs(c.x - x) < 15 and abs(c.y - y) < 15 and c.rank == r for x, y, r in self.suspects)
@@ -98,20 +100,25 @@ def main():
     screens = ScreenBook(cfg.get("screen_dir", "screens"))
 
     lvl = None
-    wins = losses_row = unknown = bad_active = no_active = 0
+    wins = losses_row = unknown = bad_active = no_active = nongame = closes = 0
 
     for step in range(args.max_steps):
+        t_step = time.time()
         img = phone.stable_grab()
         scene, btn = detect_scene(img)
 
         # ---------------- outside a level ----------------
         if scene != "GAME":
-            if lvl is not None:
+            nongame += 1
+            # A popup can appear in the middle of a level (e.g. a purchase), so the level only counts
+            # as over at the next level popup / lobby, or after several non-game screens in a row.
+            if lvl is not None and (scene == "BUTTON" or nongame >= 4):
                 v = lvl.last_view
                 cleared = v is not None and v.blue_area < 1500 and len(v.board) <= lvl.last_chain_len
                 result = "loss" if lvl.ended_by_me else ("win" if cleared else "unknown")
                 log_run(result, lvl)
-                print(f"== level over: {result} (taps={lvl.taps}, draws={lvl.draws}, failed taps={lvl.failed_taps})")
+                print(f"== level over: {result} (taps={lvl.taps}, draws={lvl.draws}, bought={lvl.paid_used}, "
+                      f"failed taps={lvl.failed_taps})")
                 if result == "win":
                     wins, losses_row = wins + 1, 0
                 else:
@@ -120,8 +127,10 @@ def main():
                 if args.levels and wins >= args.levels:
                     print(f"Reached {wins} wins. Stopping.")
                     break
+            just_bought = lvl is not None and time.time() - lvl.bought_at < 15
+            close = None if just_bought else find_close_button(img)
             if scene == "BUTTON":
-                unknown = 0
+                unknown = closes = 0
                 if losses_row >= cfg["max_losses_in_a_row"]:
                     print(f"{losses_row} levels in a row not won (each try costs coins). Stopping.")
                     break
@@ -130,7 +139,7 @@ def main():
                     break
                 print(f"tapping the {btn[2]} button")
                 tap(btn[0], btn[1])
-                time.sleep(2.5)
+                time.sleep(2.0)
             elif (hit := screens.match(img)) is not None:
                 meta, pos = hit
                 unknown = 0
@@ -142,25 +151,32 @@ def main():
                     tap(*pos)
                 else:
                     print("known screen, waiting for it to go away")
-                time.sleep(2.0)
+                time.sleep(1.5)
+            elif close is not None and closes < 3:
+                closes += 1
+                print(f"popup with a red X, closing it at {close}")
+                tap(*close)
+                time.sleep(1.5)
             else:
                 unknown += 1
-                print(f"unknown screen ({unknown}), not tapping anything")
+                print(f"unknown screen ({unknown}), not tapping anything"
+                      + (" (just bought cards, waiting)" if just_bought else ""))
                 if args.learn and unknown >= 2:
                     meta = screens.teach(img)
                     if meta:
                         print(f"  learned this screen ({meta['action']})")
-                        unknown = 0
+                        unknown = closes = 0
                     continue
                 if unknown == 3:
                     print(f"  saved {save('unknown', img, 'screen')}. Send it to me so the bot can learn this screen.")
                 if unknown >= cfg["max_unknown_screens"]:
                     print("Stuck on an unknown screen. Stopping.")
                     break
-                time.sleep(1.5)
+                time.sleep(1.0)
             if args.dry_run:
                 break
             continue
+        nongame = closes = 0
 
         # ---------------- in a level ----------------
         unknown = 0
@@ -256,7 +272,7 @@ def main():
 
         names = lambda cs: " ".join(NAMES[c.rank] for c in cs) or "-"
         note = (f"[{step}] bottom={NAMES[a.rank]} board=[{names(view.board)}] unsure={len(view.unreadable)} "
-                f"skipped={len(view.board) - len(playable)} plan=[{names(chain)}]")
+                f"skipped={len(view.board) - len(playable)} plan=[{names(chain)}] ({time.time() - t_step:.1f}s)")
         print(note)
         if args.debug:
             save("debug", annotate(img, view, chain, lvl.is_suspect, note), f"step{step}")
@@ -296,13 +312,29 @@ def main():
                     lvl.plus5_used += 1
                     lvl.draw_fails, lvl.pile_ref, lvl.gambled = 0, None, set()  # new cards: re-learn the pile look
                     time.sleep(1.5)
+                elif cfg["buy_extra_cards"] != "never" and lvl.paid_used < cfg["max_paid_extra_per_level"]:
+                    hidden = int(view.blue_area / (0.5 * G.CARD_W * G.CARD_H) + 0.5)
+                    chance = clear_chance(a.rank, [c.rank for c in view.board], lvl.mem.probs(),
+                                          cfg["extra_cards_assumed"], hidden, cfg["wrap_around"])
+                    if cfg["buy_extra_cards"] == "always" or chance >= cfg["buy_min_chance"]:
+                        print(f"  pile empty -> BUYING extra cards with coins (risk mode, "
+                              f"estimated chance to clear the board: {chance:.0%})")
+                        tap(*G.PLUS5_TAP)
+                        lvl.paid_used += 1
+                        lvl.bought_at = time.time()
+                        lvl.draw_fails, lvl.pile_ref, lvl.gambled = 0, None, set()
+                        time.sleep(1.5)
+                    else:
+                        print(f"  not buying: only {chance:.0%} chance to clear (buy_min_chance "
+                              f"{cfg['buy_min_chance']:.0%})")
+                        lvl.paid_used = cfg["max_paid_extra_per_level"]   # decided, go to END LEVEL next
                 else:
                     if lvl.end_taps >= 2:
                         print(f"  END LEVEL didn't end the level. Saved {save('unknown', img, 'end_level')}."
                               " Send it to me. Stopping.")
                         break
                     why = f" ({view.extra_reason})" if view.extra_reason else ""
-                    print(f"  no moves and the draw pile is empty -> END LEVEL, not buying extra cards{why}")
+                    print(f"  no moves and the draw pile is empty -> END LEVEL{why}")
                     lvl.ended_by_me = True
                     lvl.end_taps += 1
                     tap(*G.END_LEVEL_TAP)

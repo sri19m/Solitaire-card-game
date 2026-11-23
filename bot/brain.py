@@ -3,6 +3,7 @@
 Ranks: 1=A ... 13=K. Ace and King are adjacent (wrap-around).
 A "free" card is a face-up card that can be tapped right now.
 """
+import random
 from collections import Counter
 from dataclasses import dataclass
 
@@ -112,3 +113,39 @@ def plan(active: int, free: list[Free], p: dict[int, float], w: dict | None = No
 
     dfs(active, 0.0)
     return [free[i] for i in best]
+
+
+def clear_chance(active: int, board: list[int], p: dict[int, float], draws: int, hidden: int = 0,
+                 wrap: bool = True, trials: int = 300, seed: int = 0) -> float:
+    """Estimated chance to clear the board with `draws` more cards (Monte Carlo).
+
+    Unknown cards (new draws and face-down board cards) are sampled from the card-counting odds.
+    Face-down cards are assumed to turn up one per card cleared, which is a rough approximation.
+    """
+    if not board and hidden == 0:
+        return 1.0
+    rng = random.Random(seed)
+    ranks = [r for r in range(1, 14) if p.get(r, 0) > 0] or list(range(1, 14))
+    weights = [p.get(r, 1.0) for r in ranks]
+    wins = 0
+    for _ in range(trials):
+        cards, hid, cur, left = list(board), hidden, active, draws
+        while True:
+            if not cards and hid == 0:
+                wins += 1
+                break
+            if not cards:
+                cards, hid = rng.choices(ranks, weights, k=1), hid - 1
+            chain = plan(cur, [Free(i, r) for i, r in enumerate(cards)], p, None, wrap, node_cap=3000)
+            if chain:
+                used = {c.key for c in chain}
+                cards = [r for i, r in enumerate(cards) if i not in used]
+                cur = chain[-1].rank
+                reveal = min(hid, len(chain))
+                hid -= reveal
+                cards += rng.choices(ranks, weights, k=reveal)
+                continue
+            if left == 0:
+                break
+            cur, left = rng.choices(ranks, weights)[0], left - 1
+    return wins / trials

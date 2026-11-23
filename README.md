@@ -38,6 +38,11 @@ mode an unknown screen opens in a window. Click where the bot should tap and pre
 Cards it was unsure about during normal play go to `pending/`; label them later with
 `python tools/label_pending.py`. Results go to `runs.csv`.
 
+## Speed
+Screenshots are fetched raw (no PNG compression, identical pixels) and taps go through one open
+`adb shell`. Each step prints its time, e.g. `(0.6s)`. Measure your phone with
+`python tools/bench_adb.py`.
+
 ## How it plays
 * `bot/vision.py`: finds fully visible face-up cards (tilted at any angle, straightened, and turned
   the right way up so a 6 is never read as a 9; and splits overlapping
@@ -58,7 +63,10 @@ Cards it was unsure about during normal play go to `pending/`; label them later 
 * When the pile is empty it uses the "+N cards" tile (+5, +7, +10 ...) only if it is free: no coin
   price on it. The coin under the WILD card is used as the reference picture of a coin; if that
   reference isn't visible, only a red count badge counts as free. A shown price always means no.
-* Otherwise, with no move left, it taps END LEVEL instead of buying cards.
+* Risk mode (`config.json`): `"buy_extra_cards": "always"` buys one extra-cards tile per level with
+  coins instead of giving up; `"smart"` buys only if the estimated chance to clear the board is at
+  least `buy_min_chance`; `"never"` taps END LEVEL. The estimated chance is printed every time.
+* Event popups with a red X close button are closed automatically (closing never costs coins).
 * Only taps the level popup's Play / Try again and the lobby Level button, never other green buttons.
   Starting a level costs the game's entry fee; it stops after `max_losses_in_a_row` levels not won.
 * Unknown screens are saved to `unknown/` and nothing is tapped.

@@ -27,10 +27,10 @@ SAFE_BUTTONS = {
     "lobby Level": (1435, 615, 90, False),
 }
 POPUP_CLOSE_ROI = (1060, 103, 46, 46)   # red X of the level popup
+CLOSE_SEARCH_ROI = (0, 0, 1536, 260)    # where event popups put their red X close button
 
-# Never tapped, they cost coins: undo (930-1070, 540-670), the "+5 cards" tile that replaces the
-# empty pile (630-780, 540-700) and the WILD card. The bot only taps board cards, the pile while
-# it is verified present, END LEVEL, and SAFE_BUTTONS.
+# Never tapped: undo (930-1070, 540-670) and the WILD card (both cost coins).
+# The "+N cards" tile is tapped when free, or when bought on purpose (config "buy_extra_cards").
 
 CARD_W, CARD_H = 89, 138
 CARD_SHORT = (55, 115)                  # accepted card width range in px (layouts can scale cards)
