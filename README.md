@@ -39,7 +39,8 @@ Cards it was unsure about during normal play go to `pending/`; label them later 
 `python tools/label_pending.py`. Results go to `runs.csv`.
 
 ## How it plays
-* `bot/vision.py`: finds fully visible face-up cards (also tilted ones, and splits overlapping
+* `bot/vision.py`: finds fully visible face-up cards (tilted at any angle, straightened, and turned
+  the right way up so a 6 is never read as a 9; and splits overlapping
   cards so only the top one counts), straightens each card, and reads the big centre rank plus the
   corner index against your labelled samples. A card is only used when the match is clearly better
   than every other rank; otherwise it is "unsure" and never tapped blindly.
@@ -54,7 +55,10 @@ Cards it was unsure about during normal play go to `pending/`; label them later 
 * Never taps undo, the WILD card, or the "+5 cards" tile.
 * Draws only while the pile still looks like it did at level start, the END LEVEL button is not
   shown, and the last draw actually changed the bottom card. Otherwise it stops and saves a screenshot.
-* When the pile is empty and no move is left, it taps END LEVEL instead of buying cards.
+* When the pile is empty it uses the "+N cards" tile (+5, +7, +10 ...) only if it is free: no coin
+  price on it. The coin under the WILD card is used as the reference picture of a coin; if that
+  reference isn't visible, only a red count badge counts as free. A shown price always means no.
+* Otherwise, with no move left, it taps END LEVEL instead of buying cards.
 * Only taps the level popup's Play / Try again and the lobby Level button, never other green buttons.
   Starting a level costs the game's entry fee; it stops after `max_losses_in_a_row` levels not won.
 * Unknown screens are saved to `unknown/` and nothing is tapped.

@@ -41,6 +41,11 @@ def gold_mask(hsv):
     return ((hsv[..., 0] >= 15) & (hsv[..., 0] <= 35) & (hsv[..., 1] > 150) & (hsv[..., 2] > 200)).astype(np.uint8) * 255
 
 
+def coin_mask(hsv):
+    """Bright yellow of a coin icon (brighter and more yellow than the wooden table)."""
+    return ((hsv[..., 0] >= 17) & (hsv[..., 0] <= 35) & (hsv[..., 1] > 120) & (hsv[..., 2] > 238)).astype(np.uint8) * 255
+
+
 def fraction(mask_fn, img, roi) -> float:
     x, y, w, h = roi
     return float((mask_fn(cv2.cvtColor(img[y:y + h, x:x + w], cv2.COLOR_BGR2HSV)) > 0).mean())
@@ -74,9 +79,41 @@ def detect_scene(img):
 _DST = np.float32([[0, 0], [FACE_W - 1, 0], [FACE_W - 1, FACE_H - 1], [0, FACE_H - 1]])
 
 
-def _order(pts):
-    s, d = pts.sum(1), pts[:, 1] - pts[:, 0]
-    return np.float32([pts[s.argmin()], pts[d.argmin()], pts[s.argmax()], pts[d.argmax()]])  # tl tr br bl
+def _corners(rect, ox, oy):
+    """Corners (tl, tr, br, bl) of a card with its long side as the vertical axis, at any tilt.
+
+    The card's 'up' direction is taken along the long side, pointing to the top of the screen.
+    A card lying more than 90 degrees turned ends up upside down here; _upright() fixes that.
+    """
+    pts = cv2.boxPoints(rect)
+    e1, e2 = pts[1] - pts[0], pts[2] - pts[1]
+    long_v, short_v = (e1, e2) if np.linalg.norm(e1) >= np.linalg.norm(e2) else (e2, e1)
+    up = long_v / np.linalg.norm(long_v)
+    if up[1] > 0:
+        up = -up
+    right = np.float32([-up[1], up[0]])
+    c = np.float32(rect[0]) + np.float32([ox, oy])
+    hl, hs = np.linalg.norm(long_v) / 2, np.linalg.norm(short_v) / 2
+    return np.float32([c - right * hs + up * hl, c + right * hs + up * hl,
+                       c + right * hs - up * hl, c - right * hs - up * hl])
+
+
+def _upright(card):
+    """Turn a straightened card 180 degrees if it is upside down.
+
+    The big rank glyph always sits in the lower half of an upright card (the small corner index
+    is at the top), so an upside-down 6 is never read as a 9.
+    """
+    h, w = card.shape[:2]
+    my, mx = int(.04 * h), int(.06 * w)
+    ink = _ink(cv2.cvtColor(card, cv2.COLOR_BGR2GRAY))[my:h - my, mx:w - mx]
+    n, _, st, cent = cv2.connectedComponentsWithStats(ink)
+    big = [i for i in range(1, n) if st[i, 3] >= .18 * h]
+    if not big:
+        return card
+    area = np.float32([st[i, 4] for i in big])
+    cy = float((np.float32([cent[i][1] for i in big]) * area).sum() / area.sum())
+    return card if cy >= 0.5 * ink.shape[0] else cv2.rotate(card, cv2.ROTATE_180)
 
 
 def _as_card(img, contour, ox, oy, min_fill=0.75):
@@ -89,9 +126,9 @@ def _as_card(img, contour, ox, oy, min_fill=0.75):
         return None
     if cv2.contourArea(contour) < min_fill * w * h:
         return None
-    pts = cv2.boxPoints(rect) + np.float32([ox, oy])
-    crop = cv2.warpPerspective(img, cv2.getPerspectiveTransform(_order(pts), _DST), (FACE_W, FACE_H))
-    x, y, bw, bh = cv2.boundingRect(pts.astype(np.int32))
+    quad = _corners(rect, ox, oy)
+    crop = _upright(cv2.warpPerspective(img, cv2.getPerspectiveTransform(quad, _DST), (FACE_W, FACE_H)))
+    x, y, bw, bh = cv2.boundingRect(quad.astype(np.int32))
     return int(cx + ox), int(cy + oy), (x, y, bw, bh), crop
 
 
@@ -163,7 +200,7 @@ def _norm(g, size):
 
 def glyph_feature(card):
     """Features of the big centre rank glyph and the small corner index. None if no glyph found."""
-    card = cv2.resize(card, (FACE_W, FACE_H), interpolation=cv2.INTER_AREA)
+    card = _upright(cv2.resize(card, (FACE_W, FACE_H), interpolation=cv2.INTER_AREA))
     gray = cv2.cvtColor(card, cv2.COLOR_BGR2GRAY)
     ink = _ink(gray[int(.25 * FACE_H):int(.96 * FACE_H), int(.04 * FACE_W):int(.96 * FACE_W)])
     b = _glyph_box(ink, int(.18 * FACE_H))
@@ -273,7 +310,8 @@ class GameView:
     pile: np.ndarray = field(repr=False)  # crop of the draw pile's top card
     pile_wild: bool = False    # a free WILD card (streak reward) sits on top of the draw pile
     active_gold: bool = False  # the bottom card slot is golden, i.e. a WILD card is the bottom card
-    free_plus5: bool = False   # pile empty and the "+5" tile carries a red badge: a free +5 you own
+    free_extra: bool = False   # pile empty and the "+N cards" tile is free (no coin price, or a red badge)
+    extra_reason: str = ""
 
 
 def read_game(img, book: GlyphBook, strict: bool = False) -> GameView:
@@ -301,13 +339,66 @@ def read_game(img, book: GlyphBook, strict: bool = False) -> GameView:
                     img[py:py + ph, px:px + pw].copy(),
                     pile_wild=not end_level and fraction(gold_mask, img, G.PILE_TOP_ROI) > 0.45,
                     active_gold=active is None and fraction(gold_mask, img, G.ACTIVE_INNER) > 0.5,
-                    free_plus5=end_level and fraction(red_mask, img, G.PLUS5_BADGE_ROI) > 0.3)
+                    **_extra_cards(img, end_level))
+
+
+def _extra_cards(img, end_level) -> dict:
+    """Decide whether the "+N cards" tile can be tapped for free. A shown price always wins."""
+    if not end_level:
+        return {}
+    badge = fraction(red_mask, img, G.PLUS5_BADGE_ROI) > 0.3
+    price, score = price_under_tile(img)
+    if price is True:
+        return {"free_extra": False, "extra_reason": f"coin price shown (match {score:.2f}), never tapping"}
+    if price is False:
+        return {"free_extra": True, "extra_reason": f"no coin price on the tile (match {score:.2f})"}
+    if badge:
+        return {"free_extra": True, "extra_reason": "red badge (price check unavailable)"}
+    return {"free_extra": False, "extra_reason": "can't verify it is free"}
 
 
 def wild_card(img) -> "Card":
     """Pseudo card for a WILD lying in the bottom-card slot."""
     x, y, w, h = G.ACTIVE_INNER
     return Card(0, G.ACTIVE_TAP[0], G.ACTIVE_TAP[1], G.ACTIVE_INNER, img[y:y + h, x:x + w].copy())
+
+
+def find_coin(img, roi):
+    """Bounding box (absolute x, y, w, h) of a round coin icon inside roi, or None."""
+    rx, ry, rw, rh = roi
+    m = coin_mask(cv2.cvtColor(img[ry:ry + rh, rx:rx + rw], cv2.COLOR_BGR2HSV))
+    n, _, st, _ = cv2.connectedComponentsWithStats(m)
+    best = None
+    for i in range(1, n):
+        x, y, w, h, area = st[i]
+        if 150 <= area <= 1500 and 0.6 <= w / h <= 1.6 and area >= 0.55 * w * h and (best is None or area > best[4]):
+            best = (x, y, w, h, area)
+    return None if best is None else (rx + best[0], ry + best[1], best[2], best[3])
+
+
+def price_under_tile(img):
+    """Is a coin price shown on the "+N cards" tile?  Returns (True / False / None, match score).
+    None means it can't be checked.
+
+    The coin under the WILD card (always shown) is cut out as a template and searched for in the
+    tile's price area, so this adapts to the game's own coin art without guessing colours.
+    """
+    ref = find_coin(img, G.WILD_PRICE_ROI)
+    if ref is None:
+        return None, 0.0
+    x, y, w, h = ref
+    p = 2
+    tpl = cv2.cvtColor(img[y - p:y + h + p, x - p:x + w + p], cv2.COLOR_BGR2GRAY)
+    tx, ty, tw, th = G.TILE_PRICE_ROI
+    area = cv2.cvtColor(img[ty:ty + th, tx:tx + tw], cv2.COLOR_BGR2GRAY)
+    if tpl.size == 0:
+        return None, 0.0
+    score = 0.0
+    for s in (0.7, 0.85, 1.0, 1.15, 1.3):          # the tile's coin may be drawn at another size
+        t = cv2.resize(tpl, None, fx=s, fy=s)
+        if t.shape[0] <= area.shape[0] and t.shape[1] <= area.shape[1]:
+            score = max(score, float(cv2.matchTemplate(area, t, cv2.TM_CCOEFF_NORMED).max()))
+    return (score >= 0.6 or find_coin(img, G.TILE_PRICE_ROI) is not None), score
 
 
 def _small_gray(a):

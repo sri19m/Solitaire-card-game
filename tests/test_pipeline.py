@@ -31,7 +31,7 @@ def paste(img, card, x, y, outline=True, angle=0.0):
         card = card.copy()
         cv2.rectangle(card, (0, 0), (w - 1, h - 1), (170, 170, 170), 1)
     if angle:
-        pad = 30
+        pad = 60
         big = np.zeros((h + 2 * pad, w + 2 * pad, 3), np.uint8)
         m = np.zeros(big.shape[:2], np.uint8)
         big[pad:pad + h, pad:pad + w] = card
@@ -234,16 +234,55 @@ def test_card_touching_white_symbol_of_board_item():
         assert sorted(c.rank for c in read_game(img, book).board) == [6, 10]
 
 
-def test_free_plus5_only_with_badge():
+def draw_coin(img, cx, cy, text):
+    cv2.circle(img, (cx, cy), 13, (40, 205, 255), -1)
+    cv2.circle(img, (cx, cy), 13, (20, 140, 220), 2)
+    cv2.putText(img, text, (cx + 18, cy + 8), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+
+def extra_tile_screen(label="+5", price=None, badge=False, wild_price=True):
+    img = frame(active=8)
+    img[515:640, 1415:1495] = GOLD                                         # WILD card
+    if wild_price:
+        draw_coin(img, 1408, 678, "4,000")
+    x, y, w, h = G.PILE_TOP_ROI
+    img[y - 10:y + h + 5, x - 40:x + w] = BACK
+    cv2.putText(img, label, (x - 25, y + 75), cv2.FONT_HERSHEY_DUPLEX, 1.4, (255, 255, 255), 5)
+    if price:
+        draw_coin(img, 688, 680, price)
+    if badge:
+        cv2.circle(img, (759, 553), 14, (40, 40, 230), -1)
+    cv2.rectangle(img, (280, 615), (480, 680), (40, 40, 230), -1)          # END LEVEL
+    return img
+
+
+def test_extra_cards_tile_free_only_without_price():
     with tempfile.TemporaryDirectory() as d:
-        img = frame(active=8)
-        x, y, w, h = G.PILE_TOP_ROI
-        img[y:y + h, x - 40:x + w] = BACK
-        cv2.putText(img, "+5", (x - 20, y + 75), cv2.FONT_HERSHEY_DUPLEX, 1.8, (255, 255, 255), 6)
-        cv2.rectangle(img, (280, 615), (480, 680), (40, 40, 230), -1)           # END LEVEL
-        v = read_game(img, GlyphBook(d))
-        assert v.end_level and not v.free_plus5 and not v.pile_wild               # paid +5: never tapped
-        cv2.circle(img, (759, 553), 14, (40, 40, 230), -1)                      # red "1" badge
-        cv2.putText(img, "1", (753, 560), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        assert read_game(img, GlyphBook(d)).free_plus5
-        assert not read_game(frame(active=8), GlyphBook(d)).free_plus5           # pile not empty
+        book = GlyphBook(d)
+        for label in ("+5", "+7", "+10"):
+            assert read_game(extra_tile_screen(label), book).free_extra             # no coins shown: tap it
+            assert not read_game(extra_tile_screen(label, price="2,900"), book).free_extra
+        assert not read_game(extra_tile_screen(price="2,900", badge=True), book).free_extra  # a price always wins
+        # Coin reference under the WILD not visible: only trust the red badge.
+        assert not read_game(extra_tile_screen(wild_price=False), book).free_extra
+        assert read_game(extra_tile_screen(wild_price=False, badge=True), book).free_extra
+        assert not read_game(frame(active=8), book).free_extra                       # pile not empty
+
+
+def test_slanted_cards_any_angle_and_6_vs_9():
+    with tempfile.TemporaryDirectory() as d:
+        book = full_book(d)
+        for r in (6, 9):
+            for ang in (0, 30, -40, 60, -75, 120, 170, 180):
+                img = frame(active=3)
+                paste(img, card_img(r, (40, 30, 200)), 600, 250, angle=ang)
+                assert [c.rank for c in read_game(img, book).board] == [r], (r, ang)
+
+
+def test_paid_tile_with_bigger_coin_is_still_paid():
+    img = extra_tile_screen("+7")
+    cv2.circle(img, (690, 682), 17, (40, 205, 255), -1)       # price coin drawn larger than the WILD's
+    cv2.circle(img, (690, 682), 17, (20, 140, 220), 2)
+    cv2.putText(img, "2,900", (712, 690), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    with tempfile.TemporaryDirectory() as d:
+        assert not read_game(img, GlyphBook(d)).free_extra

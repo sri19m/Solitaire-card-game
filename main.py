@@ -290,8 +290,8 @@ def main():
                     lvl.gambled.add(key(gamble[0]))
                     print("  pile empty, trying an uncertain card (free)")
                     tap(gamble[0].x, gamble[0].y)
-                elif view.free_plus5 and lvl.plus5_used < cfg["max_free_plus5_per_level"]:
-                    print("  pile empty, you own a free +5 (red badge) -> using it")
+                elif view.free_extra and lvl.plus5_used < cfg["max_free_plus5_per_level"]:
+                    print(f"  pile empty, the extra-cards tile is free ({view.extra_reason}) -> using it")
                     tap(*G.PLUS5_TAP)
                     lvl.plus5_used += 1
                     lvl.draw_fails, lvl.pile_ref, lvl.gambled = 0, None, set()  # new cards: re-learn the pile look
@@ -301,7 +301,8 @@ def main():
                         print(f"  END LEVEL didn't end the level. Saved {save('unknown', img, 'end_level')}."
                               " Send it to me. Stopping.")
                         break
-                    print("  no moves and the draw pile is empty -> END LEVEL (never buying +5 cards)")
+                    why = f" ({view.extra_reason})" if view.extra_reason else ""
+                    print(f"  no moves and the draw pile is empty -> END LEVEL, not buying extra cards{why}")
                     lvl.ended_by_me = True
                     lvl.end_taps += 1
                     tap(*G.END_LEVEL_TAP)
