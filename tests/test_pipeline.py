@@ -192,3 +192,21 @@ def test_wild_as_bottom_card():
         assert v.active is None and v.active_gold
     chain = plan(WILD, [Free(0, 9), Free(1, 10), Free(2, 4)], {})
     assert sorted(c.rank for c in chain) == [9, 10]   # starts anywhere, then follows the rules
+
+
+def test_taught_screens():
+    from bot.screens import ScreenBook
+    congrats = np.full((716, 1536, 3), (90, 30, 50), np.uint8)
+    cv2.putText(congrats, "CONGRATULATIONS!", (390, 180), cv2.FONT_HERSHEY_DUPLEX, 2.5, (40, 200, 250), 8)
+    cv2.putText(congrats, "TAP TO COLLECT", (670, 680), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+    with tempfile.TemporaryDirectory() as d:
+        book = ScreenBook(d)
+        assert book.match(congrats) is None
+        book.remember(congrats, "tap", (767, 670))
+        noisy = cv2.add(congrats, np.random.default_rng(0).integers(0, 12, congrats.shape, dtype=np.uint8))
+        meta, pos = ScreenBook(d).match(noisy)                 # reloaded from disk
+        assert meta["action"] == "tap" and pos == (767, 670)
+        other = congrats.copy()
+        cv2.rectangle(other, (600, 640), (940, 700), (40, 200, 60), -1)  # e.g. a green buy button there
+        assert book.match(other) is None
+        assert book.match(frame(active=5)) is None

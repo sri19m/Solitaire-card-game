@@ -21,6 +21,7 @@ from bot.adb import Phone
 from bot.brain import WILD, Free, LevelMemory, first_failed_tap, plan
 from bot.debug import annotate
 from bot.learn import ask_rank
+from bot.screens import ScreenBook
 from bot.vision import NAMES, GlyphBook, detect_scene, image_diff, pile_matches, read_game, wild_card
 
 
@@ -92,6 +93,7 @@ def main():
         except Exception:
             pass
     tap = (lambda x, y: None) if args.dry_run else phone.tap
+    screens = ScreenBook(cfg.get("screen_dir", "screens"))
 
     lvl = None
     wins = losses_row = unknown = bad_active = no_active = 0
@@ -127,9 +129,27 @@ def main():
                 print(f"tapping the {btn[2]} button")
                 tap(btn[0], btn[1])
                 time.sleep(2.5)
+            elif (hit := screens.match(img)) is not None:
+                meta, pos = hit
+                unknown = 0
+                if meta["action"] == "stop":
+                    print("taught screen: stop here. Stopping.")
+                    break
+                if meta["action"] == "tap":
+                    print(f"known screen, tapping at {pos}")
+                    tap(*pos)
+                else:
+                    print("known screen, waiting for it to go away")
+                time.sleep(2.0)
             else:
                 unknown += 1
                 print(f"unknown screen ({unknown}), not tapping anything")
+                if args.learn and unknown >= 2:
+                    meta = screens.teach(img)
+                    if meta:
+                        print(f"  learned this screen ({meta['action']})")
+                        unknown = 0
+                    continue
                 if unknown == 3:
                     print(f"  saved {save('unknown', img, 'screen')}. Send it to me so the bot can learn this screen.")
                 if unknown >= cfg["max_unknown_screens"]:

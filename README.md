@@ -24,6 +24,12 @@ Check your labels at any time:
 
 A wrong label lives in `glyphs/` as `<RANK>_<n>.png`: delete that file.
 
+## Teach it screens
+Reward popups such as "Congratulations! Tap to collect" are learned the same way: in `--learn`
+mode an unknown screen opens in a window. Click where the bot should tap and press Enter
+(`w` = the screen goes away by itself, `s` = stop the bot there, Esc = skip). Taught screens live in
+`screens/`; delete a pair of files there to forget one. Never teach a tap on anything that costs coins.
+
 ## Run
     python main.py --dry-run     # read the screen once, print the plan, no taps
     python main.py               # play
