@@ -18,10 +18,10 @@ import cv2
 
 from bot import geometry as G
 from bot.adb import Phone
-from bot.brain import Free, LevelMemory, first_failed_tap, plan
+from bot.brain import WILD, Free, LevelMemory, first_failed_tap, plan
 from bot.debug import annotate
 from bot.learn import ask_rank
-from bot.vision import NAMES, GlyphBook, detect_scene, image_diff, pile_matches, read_game
+from bot.vision import NAMES, GlyphBook, detect_scene, image_diff, pile_matches, read_game, wild_card
 
 
 def save(folder: str, img, name: str) -> str:
@@ -59,6 +59,7 @@ class Level:
         self.suspect_n = None         # board size when the suspects were recorded
         self.seen_keys = set()        # unreadable cards already saved / asked about
         self.gambled = set()
+        self.wild_drawn = False       # we just drew a WILD from the pile
 
     def is_suspect(self, c) -> bool:
         return any(abs(c.x - x) < 15 and abs(c.y - y) < 15 and c.rank == r for x, y, r in self.suspects)
@@ -93,7 +94,7 @@ def main():
     tap = (lambda x, y: None) if args.dry_run else phone.tap
 
     lvl = None
-    wins = losses_row = unknown = bad_active = 0
+    wins = losses_row = unknown = bad_active = no_active = 0
 
     for step in range(args.max_steps):
         img = phone.stable_grab()
@@ -144,10 +145,14 @@ def main():
         strict = args.learn and bool(book.missing_ranks())
         view = read_game(img, book, strict)
         a = view.active
+        if a is None and view.active_gold and ((lvl and lvl.wild_drawn) or no_active >= 3):
+            a = view.active = wild_card(img)          # a WILD is the bottom card: anything can be played
         if a is None:
+            no_active += 1
             print("bottom card not found (animation?), waiting")
             time.sleep(0.5)
             continue
+        no_active = 0
         if a.rank is None:
             if args.learn:
                 r = ask_rank(a.crop, "Rank of the BOTTOM card?")
@@ -164,14 +169,16 @@ def main():
         bad_active = 0
 
         if lvl is None:
-            lvl = Level(cfg["copies_per_rank"], None if view.end_level else view.pile)
-            lvl.mem.see_drawn(a.rank)
+            lvl = Level(cfg["copies_per_rank"], None)
+            if a.rank != WILD:
+                lvl.mem.see_drawn(a.rank)
             print("== new level")
         else:
             # Check that the previous step's actions actually happened.
             if lvl.drew:
-                if image_diff(lvl.prev_active, a.crop) > 6:
-                    lvl.mem.see_drawn(a.rank)
+                if lvl.prev_active.shape != a.crop.shape or image_diff(lvl.prev_active, a.crop) > 6:
+                    if a.rank != WILD:
+                        lvl.mem.see_drawn(a.rank)
                     lvl.draw_fails = 0
                 else:
                     lvl.draw_fails += 1
@@ -196,6 +203,10 @@ def main():
                         else:
                             save("pending", card.crop, f"failed_{NAMES[bad.rank]}")
         lvl.chain, lvl.drew, lvl.prev_active = [], False, a.crop
+        if a.rank != WILD:
+            lvl.wild_drawn = False
+        if lvl.pile_ref is None and not view.end_level and not view.pile_wild:
+            lvl.pile_ref = view.pile      # remember the normal card back of the draw pile
 
         # Cards the bot isn't sure about: ask (learn mode) or keep for later labelling.
         fresh = [c for c in view.unreadable if key(c) not in lvl.seen_keys]
@@ -233,11 +244,18 @@ def main():
                 tap(c.x, c.y)
                 time.sleep(cfg["tap_delay"])
             lvl.chain, lvl.taps, lvl.last_chain_len, lvl.pile_unsure = chain, lvl.taps + len(chain), len(chain), 0
+        elif not view.board and not view.unreadable and view.blue_area < 1500:
+            print("  board cleared, waiting for the win screen")
+            time.sleep(1.0)
         else:
             lvl.last_chain_len = 0
             pile_ok = (not view.end_level and lvl.draw_fails < 2
                        and lvl.pile_ref is not None and pile_matches(lvl.pile_ref, view.pile))
-            if pile_ok:
+            if view.pile_wild and lvl.draw_fails < 2:
+                print("  no moves -> taking the free WILD card on top of the draw pile")
+                tap(*G.DRAW_TAP)
+                lvl.drew, lvl.wild_drawn, lvl.draws, lvl.pile_unsure = True, True, lvl.draws + 1, 0
+            elif pile_ok:
                 print("  no moves -> drawing")
                 tap(*G.DRAW_TAP)
                 lvl.drew, lvl.draws, lvl.pile_unsure = True, lvl.draws + 1, 0

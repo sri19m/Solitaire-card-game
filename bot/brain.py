@@ -6,6 +6,8 @@ A "free" card is a face-up card that can be tapped right now.
 from collections import Counter
 from dataclasses import dataclass
 
+WILD = 0  # rank used for a wild card as the bottom card: any board card can be played on it
+
 # Tuned with tools/simulate.py (see README). Re-tune after layout changes.
 DEFAULT_W = {"len": 100.0, "unlock": 40.0, "cont": 12.0, "hid": 30.0}
 
@@ -78,6 +80,7 @@ def plan(active: int, free: list[Free], p: dict[int, float], w: dict | None = No
          wrap: bool = True, node_cap: int = 40000) -> list[Free]:
     """Pick the best sequence of taps from the current board. [] means: draw a card.
 
+    active == WILD means the bottom card is a wild card, so the chain may start with any card.
     Every ordered chain of legal taps is scored. A non-empty chain is always
     preferred over drawing, because drawing burns a card from the limited pile.
     """
@@ -100,7 +103,7 @@ def plan(active: int, free: list[Free], p: dict[int, float], w: dict | None = No
         if nodes >= node_cap:
             return
         for i in sorted(remaining):
-            if adjacent(free[i].rank, cur, wrap):
+            if cur == WILD or adjacent(free[i].rank, cur, wrap):
                 chain.append(i)
                 remaining.discard(i)
                 dfs(free[i].rank, unlock_sum + free[i].unlock)

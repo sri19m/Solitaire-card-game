@@ -166,3 +166,29 @@ def test_glyph_self_check():
     with tempfile.TemporaryDirectory() as d:
         res = full_book(d).leave_one_out()
         assert all(rd.guess == r for _, r, rd in res)
+
+
+GOLD = (40, 200, 250)  # BGR of the golden WILD card
+
+
+def test_free_wild_on_draw_pile_is_recognised():
+    img = frame(active=7)
+    x, y, w, h = G.PILE_TOP_ROI
+    img[y - 8:y + h + 8, x - 6:x + w + 6] = GOLD
+    with tempfile.TemporaryDirectory() as d:
+        v = read_game(img, GlyphBook(d))
+        assert v.pile_wild and not v.end_level
+        cv2.rectangle(img, (280, 615), (480, 680), (40, 40, 230), -1)   # END LEVEL shown -> never draw
+        assert not read_game(img, GlyphBook(d)).pile_wild
+        assert not read_game(frame(active=7), GlyphBook(d)).pile_wild    # normal card back
+
+
+def test_wild_as_bottom_card():
+    from bot.brain import WILD
+    img = frame([(500, 250, 9), (700, 250, 10)])
+    img[553:691, 814:903] = GOLD
+    with tempfile.TemporaryDirectory() as d:
+        v = read_game(img, full_book(d))
+        assert v.active is None and v.active_gold
+    chain = plan(WILD, [Free(0, 9), Free(1, 10), Free(2, 4)], {})
+    assert sorted(c.rank for c in chain) == [9, 10]   # starts anywhere, then follows the rules

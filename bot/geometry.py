@@ -6,6 +6,8 @@ CANON_W = 1536
 
 BOARD_ROI = (180, 95, 1210, 445)        # all board cards live here
 ACTIVE_ROI = (790, 535, 140, 175)       # the face-up card at the bottom
+ACTIVE_INNER = (826, 566, 64, 112)      # strictly inside that card (used to spot a WILD there)
+ACTIVE_TAP = (858, 622)
 
 DRAW_TAP = (727, 622)                   # top card of the face-down draw pile
 PILE_TOP_ROI = (692, 562, 70, 120)      # that card, compared against its look at level start

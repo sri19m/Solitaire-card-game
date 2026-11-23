@@ -15,6 +15,7 @@ from . import geometry as G
 
 RANKS = {"A": 1, "J": 11, "Q": 12, "K": 13, **{str(n): n for n in range(2, 11)}}
 NAMES = {v: k for k, v in RANKS.items()}
+NAMES[0] = "WILD"
 FACE_W, FACE_H = 90, 138          # every card crop is warped to this upright size
 
 
@@ -258,6 +259,8 @@ class GameView:
     blue_area: int             # face-down card pixels left on the board
     end_level: bool            # red END LEVEL button visible: the draw pile is empty
     pile: np.ndarray = field(repr=False)  # crop of the draw pile's top card
+    pile_wild: bool = False    # a free WILD card (streak reward) sits on top of the draw pile
+    active_gold: bool = False  # the bottom card slot is golden, i.e. a WILD card is the bottom card
 
 
 def read_game(img, book: GlyphBook, strict: bool = False) -> GameView:
@@ -280,8 +283,17 @@ def read_game(img, book: GlyphBook, strict: bool = False) -> GameView:
 
     bx, by, bw, bh = G.BOARD_ROI
     px, py, pw, ph = G.PILE_TOP_ROI
-    return GameView(active, board, bad, int((blue[by:by + bh, bx:bx + bw] > 0).sum()),
-                    fraction(red_mask, img, G.END_LEVEL_ROI) > 0.35, img[py:py + ph, px:px + pw].copy())
+    end_level = fraction(red_mask, img, G.END_LEVEL_ROI) > 0.35
+    return GameView(active, board, bad, int((blue[by:by + bh, bx:bx + bw] > 0).sum()), end_level,
+                    img[py:py + ph, px:px + pw].copy(),
+                    pile_wild=not end_level and fraction(gold_mask, img, G.PILE_TOP_ROI) > 0.45,
+                    active_gold=active is None and fraction(gold_mask, img, G.ACTIVE_INNER) > 0.5)
+
+
+def wild_card(img) -> "Card":
+    """Pseudo card for a WILD lying in the bottom-card slot."""
+    x, y, w, h = G.ACTIVE_INNER
+    return Card(0, G.ACTIVE_TAP[0], G.ACTIVE_TAP[1], G.ACTIVE_INNER, img[y:y + h, x:x + w].copy())
 
 
 def _small_gray(a):
