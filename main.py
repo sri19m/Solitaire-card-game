@@ -258,6 +258,7 @@ def main():
         print(note)
         if args.debug:
             save("debug", annotate(img, view, chain, lvl.is_suspect, note), f"step{step}")
+            save("debug", img, f"step{step}_raw")
 
         if chain:
             for c in chain:

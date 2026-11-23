@@ -210,3 +210,25 @@ def test_taught_screens():
         cv2.rectangle(other, (600, 640), (940, 700), (40, 200, 60), -1)  # e.g. a green buy button there
         assert book.match(other) is None
         assert book.match(frame(active=5)) is None
+
+
+def test_cards_from_real_debug_screens():
+    # Step 78 on the phone: J at the very top, and a 6 / 10 with a purple board item over their top edge.
+    with tempfile.TemporaryDirectory() as d:
+        book = full_book(d)
+        img = frame([(724, 75, 11), (570, 342, 6), (820, 342, 10)], 7)
+        for x in (567, 880):                                  # purple items overlapping the cards' tops
+            cv2.rectangle(img, (x, 270), (x + 85, 355), (150, 40, 120), -1)
+        v = read_game(img, book)
+        assert sorted(c.rank for c in v.board) == [6, 10, 11]
+        assert [c.rank for c in plan(v.active.rank, [Free(i, c.rank) for i, c in enumerate(v.board)], {})][0] == 6
+
+
+def test_card_touching_white_symbol_of_board_item():
+    with tempfile.TemporaryDirectory() as d:
+        book = full_book(d)
+        img = frame([(570, 342, 6), (820, 342, 10)], 7)
+        for x in (570, 820):
+            cv2.rectangle(img, (x - 4, 262), (x + 88, 352), (150, 40, 120), -1)    # purple item
+            cv2.ellipse(img, (x + 44, 340), (22, 14), 0, 0, 360, (250, 250, 250), -1)  # its white symbol
+        assert sorted(c.rank for c in read_game(img, book).board) == [6, 10]

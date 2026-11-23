@@ -79,8 +79,9 @@ def _order(pts):
     return np.float32([pts[s.argmin()], pts[d.argmin()], pts[s.argmax()], pts[d.argmax()]])  # tl tr br bl
 
 
-def _as_card(img, contour, ox, oy, min_fill=0.85):
-    """Upright crop of a card-shaped contour, or None. Handles slightly tilted cards."""
+def _as_card(img, contour, ox, oy, min_fill=0.75):
+    """Upright crop of a card-shaped contour, or None. Handles slightly tilted cards and cards with a
+    corner hidden by a board item. If such a card turns out not tappable, tap verification skips it."""
     rect = cv2.minAreaRect(contour)
     (cx, cy), (w, h), _ = rect
     short, long_ = sorted((w, h))
@@ -104,7 +105,7 @@ def _split_merged(img, mask, box, rx, ry):
     piece = cv2.morphologyEx(piece, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     out = []
     for c in cv2.findContours(piece, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
-        card = _as_card(img, c, rx + x, ry + y, min_fill=0.8)
+        card = _as_card(img, c, rx + x, ry + y, min_fill=0.75)
         if card:
             out.append(card)
     return out
@@ -124,8 +125,19 @@ def find_cards(img, roi):
         card = _as_card(img, c, rx, ry)
         if card:
             out.append(card)
-        elif w * h > 1.25 * card_area:
-            out += _split_merged(img, mask, (x, y, w, h), rx, ry)
+        elif w * h > 0.9 * card_area:
+            # Not card-shaped: overlapping cards, or a white board item touching the card.
+            # Cut along outlines first, then try stripping thin attachments.
+            pieces = _split_merged(img, mask, (x, y, w, h), rx, ry)
+            if not pieces:
+                blob = np.zeros_like(mask)
+                cv2.drawContours(blob, [c], -1, 255, -1)
+                blob = cv2.morphologyEx(blob, cv2.MORPH_OPEN, np.ones((25, 25), np.uint8))
+                for c2 in cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]:
+                    piece = _as_card(img, c2, rx, ry)
+                    if piece:
+                        pieces.append(piece)
+            out += pieces
     return sorted(out, key=lambda k: (k[1] // 40, k[0]))
 
 

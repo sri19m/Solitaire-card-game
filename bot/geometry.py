@@ -4,7 +4,7 @@ ROIs are (x, y, w, h).
 """
 CANON_W = 1536
 
-BOARD_ROI = (180, 95, 1210, 445)        # all board cards live here
+BOARD_ROI = (180, 45, 1150, 495)        # all board cards live here (top row starts near y=75)
 ACTIVE_ROI = (790, 535, 140, 175)       # the face-up card at the bottom
 ACTIVE_INNER = (826, 566, 64, 112)      # strictly inside that card (used to spot a WILD there)
 ACTIVE_TAP = (858, 622)
